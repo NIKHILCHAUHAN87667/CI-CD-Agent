@@ -12,27 +12,48 @@ class ErrorParser:
                 r'SyntaxError',
                 r"expected ':'",
                 r'invalid syntax',
+                r'EOL while scanning string literal',
+                r'unterminated string',
+                r"Missing parentheses in call to 'print'",
+                r'unexpected EOF',
+                r'unmatched',
+                r'closing parenthesis',
             ],
             ErrorType.INDENTATION: [
                 r'IndentationError',
                 r'unexpected indent',
                 r'expected an indented block',
+                r'unindent does not match',
             ],
             ErrorType.IMPORT: [
                 r'ModuleNotFoundError',
                 r'No module named',
+                r'cannot import name',
+                r'attempted relative import',
+                r'ImportError',
             ],
             ErrorType.TYPE_ERROR: [
                 r'TypeError',
-                r"name '(List|Dict|Set|Tuple|Optional|Union|Any|Callable)' is not defined",  # Specific typing types
-                r"name '.*?' is not defined",  # Catches other undefined types
+                r"name '(List|Dict|Set|Tuple|Optional|Union|Any|Callable|Iterable|Mapping|Sequence)' is not defined",
+                r'can only concatenate str',
+                r'must be str, not',
+                r'unsupported operand type',
+                r'missing.*required positional argument',
+                r'takes.*positional argument.*but.*were given',
             ],
             ErrorType.LOGIC: [
-                r'NameError',  # Now checked AFTER TYPE_ERROR
+                r'NameError',
+                r"name '.*?' is not defined",
+                r'has no attribute',
+                r'AttributeError',
+                r'division by zero',
+                r'ZeroDivisionError',
             ],
             ErrorType.LINTING: [
                 r'unused import',
                 r'imported but unused',
+                r'unused variable',
+                r'trailing whitespace',
             ],
         }
         
