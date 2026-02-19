@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./workspace:/app/workspace
+      - ./results.json:/app/results.json
+    environment:
+      - PYTHONUNBUFFERED=1
+      - SANDBOX_URL=http://sandbox:8080
+      - SANDBOX_TOKEN=change-me
+    restart: unless-stopped
+
+  sandbox:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.agent
+    ports:
+      - "8080:8080"
+    environment:
+      - SANDBOX_TOKEN=change-me
+    restart: unless-stopped

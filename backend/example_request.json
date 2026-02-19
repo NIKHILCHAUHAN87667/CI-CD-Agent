@@ -1,0 +1,6 @@
+{
+  "repo_url": "https://github.com/username/repo.git",
+  "team": "TeamA",
+  "leader": "John",
+  "max_retries": 5
+}
