@@ -36,6 +36,12 @@ async def startup_event():
     loop = asyncio.get_running_loop()
     ws_manager.set_loop(loop)
     print(f"✅ Event loop captured for WebSocket manager")
+    
+    # Ensure workspace directory exists
+    import os
+    from app.config import WORKSPACE_DIR
+    os.makedirs(WORKSPACE_DIR, exist_ok=True)
+    print(f"✅ Workspace directory ready: {WORKSPACE_DIR}")
 
 # CORS middleware
 app.add_middleware(
@@ -365,9 +371,13 @@ async def run_agent_async(
     
     def run_in_background():
         """Execute agent in background with progress updates"""
+        print(f"🎬 [BACKGROUND] Task started for run #{run_id}")
         try:
             from app.database import SessionLocal
             bg_db = SessionLocal()
+            
+            print(f"🔧 [BACKGROUND] Initializing DockerRunner for run #{run_id}")
+            ws_manager.send_progress_sync(run_id, "initializing", f"🔧 Initializing agent...")
             
             try:
                 runner = DockerRunner(
@@ -378,6 +388,7 @@ async def run_agent_async(
                     ws_manager=ws_manager,
                     run_id=run_id
                 )
+                print(f"🏃 [BACKGROUND] Running agent for run #{run_id}")
                 result = runner.run()
                 
                 # Update database
@@ -397,7 +408,10 @@ async def run_agent_async(
             finally:
                 bg_db.close()
         except Exception as e:
-            print(f"❌ [ASYNC] Run #{run_id} failed: {e}")
+            import traceback
+            print(f"❌ [ASYNC] Run #{run_id} failed with exception:")
+            traceback.print_exc()
+            ws_manager.send_progress_sync(run_id, "error", f"❌ Failed: {str(e)}")
             from app.database import SessionLocal
             bg_db = SessionLocal()
             try:

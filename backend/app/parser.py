@@ -39,13 +39,15 @@ class ErrorParser:
         # Pattern to extract file and line number
         self.file_line_pattern = r'File "(.*?)", line (\d+)'
     
-    def parse_errors(self, test_output: str) -> List[ErrorInfo]:
+    def parse_errors(self, test_output: str, repo_path: str = None) -> List[ErrorInfo]:
         """Parse test output and return structured error information"""
         errors = []
         lines = test_output.split('\n')
         
         current_file = None
         current_line = None
+        
+        print(f"[PARSER] Parsing errors from test output (repo_path={repo_path})")
         
         for i, line in enumerate(lines):
             # Try to extract file and line number
@@ -54,9 +56,61 @@ class ErrorParser:
                 current_file = file_match.group(1)
                 current_line = int(file_match.group(2))
                 
+                print(f"[PARSER] Found file reference: {current_file}:{current_line}")
+                
                 # Skip frozen/built-in Python modules (these are cascade errors)
                 if current_file.startswith('<frozen') or current_file.startswith('<'):
+                    print(f"[PARSER] ❌ Skipped (frozen/builtin): {current_file}")
                     continue
+                
+                # CRITICAL: Only include errors from the actual repository
+                # Skip system libraries, site-packages, Python stdlib
+                import os
+                
+                # Check if path is absolute or relative
+                is_absolute = os.path.isabs(current_file)
+                
+                if is_absolute:
+                    # For absolute paths, check if they're in the repo
+                    if repo_path:
+                        normalized_file = os.path.normpath(current_file).lower()
+                        normalized_repo = os.path.normpath(repo_path).lower()
+                        print(f"[PARSER] ❌ Skipped (not in repo): {current_file}")
+                            
+                        # Skip if not in the repository
+                        if not normalized_file.startswith(normalized_repo):
+                            continue
+                    else:
+                        # Fallback: Skip common system paths
+                        skip_patterns = [
+                            'site-packages',
+                            'Python313\\Lib',
+                            'Python312\\Lib',
+                            'Python311\\Lib',
+                            'Python310\\Lib',
+                            'dist-packages',
+                            '/usr/lib/python',
+                            '/usr/local/lib/python',
+                            'AppData\\Roaming\\Python',
+                            'AppData\\Local\\Programs\\Python'
+                        ]
+                        if any(pattern in current_file for pattern in skip_patterns):
+                            print(f"[PARSER] ❌ Skipped (system path): {current_file}")
+                            continue
+                else:
+                    # For relative paths, skip only obvious system patterns
+                    # (most relative paths are from the repo itself)
+                    skip_patterns = [
+                        'site-packages',
+                        'pytest',
+                        'pluggy',
+                        '_pytest',
+                        'importlib',
+                        'unittest'
+                    ]
+                    if any(pattern in current_file for pattern in skip_patterns):
+                        print(f"[PARSER] ❌ Skipped (system module): {current_file}")
+                        continue
                 
                 # Look ahead for error type
                 error_type, error_message = self._identify_error_type(
@@ -64,13 +118,15 @@ class ErrorParser:
                 )
                 
                 if error_type and current_file and current_line:
+                    print(f"[PARSER] ✅ Detected {error_type.value} error in {current_file}:{current_line}")
                     errors.append(ErrorInfo(
                         file=current_file,
                         line=current_line,
                         type=error_type,
                         message=error_message
                     ))
-                    
+        
+        print(f"[PARSER] Total errors detected: {len(errors)}")
         return errors
     
     def _identify_error_type(self, current_line: str, context_lines: List[str]) -> tuple:

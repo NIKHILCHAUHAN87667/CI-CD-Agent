@@ -1,6 +1,15 @@
 import os
+import shutil
+import stat
+import time
 from git import Repo, GitCommandError
 from typing import Optional
+
+
+def remove_readonly(func, path, excinfo):
+    """Error handler for Windows readonly files"""
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
 
 
 class GitHandler:
@@ -17,14 +26,29 @@ class GitHandler:
         repo_name = repo_url.rstrip('/').split('/')[-1].replace('.git', '')
         repo_path = os.path.join(self.workspace_dir, repo_name)
         
-        # Check if repo already exists
+        # ALWAYS start fresh - remove existing directory to avoid stale files
         if os.path.exists(repo_path):
-            print(f"Repository already exists at {repo_path}")
-            self.repo = Repo(repo_path)
-            self.repo_path = repo_path
-            return repo_path
+            print(f"Removing existing repository at {repo_path} to start fresh...")
+            max_attempts = 3
+            for attempt in range(max_attempts):
+                try:
+                    # On Windows, use onerror to handle readonly files
+                    shutil.rmtree(repo_path, onerror=remove_readonly)
+                    print(f"✓ Successfully removed old repository")
+                    break
+                except Exception as e:
+                    if attempt < max_attempts - 1:
+                        print(f"Attempt {attempt + 1} failed, retrying... ({e})")
+                        time.sleep(1)
+                    else:
+                        print(f"❌ Could not remove directory after {max_attempts} attempts: {e}")
+                        raise Exception(f"Failed to clean workspace directory: {e}")
+            
+            # Verify it's gone
+            if os.path.exists(repo_path):
+                raise Exception(f"Directory still exists after deletion: {repo_path}")
         
-        # Clone the repository
+        # Clone the repository fresh from GitHub
         print(f"Cloning repository from {repo_url}...")
         self.repo = Repo.clone_from(repo_url, repo_path)
         self.repo_path = repo_path

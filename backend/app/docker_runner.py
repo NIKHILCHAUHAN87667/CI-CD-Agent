@@ -1,6 +1,10 @@
 import os
 import subprocess
 import json
+import threading
+import time
+import sys
+import venv
 from typing import List, Dict
 from app.models import ErrorInfo, FixResult, AgentResponse, ErrorType
 from app.parser import ErrorParser
@@ -28,6 +32,8 @@ class DockerRunner:
         # Project type detection
         self.project_type = None  # 'python', 'javascript', or 'unknown'
         self.test_command = None
+        self.venv_path = None
+        self.venv_python = None
         
         # Tracking
         self.fixes: List[FixResult] = []
@@ -55,8 +61,12 @@ class DockerRunner:
         self._emit_progress("analyzing", "🔍 Detecting project type...")
         self._detect_project_type(repo_path)
         self._emit_progress("info", f"📋 Detected {self.project_type} project")
-        
-        # Step 2: Install dependencies
+                # Step 2.5: Create virtual environment for Python projects
+        if self.project_type == 'python':
+            self._emit_progress("venv", "🔧 Creating isolated Python environment...")
+            self._create_venv(repo_path)
+            self._emit_progress("success", "✅ Virtual environment created")
+                # Step 2: Install dependencies
         self._emit_progress("installing", "📦 Installing dependencies...")
         self._install_dependencies(repo_path)
         self._emit_progress("success", "✅ Dependencies installed")
@@ -75,8 +85,8 @@ class DockerRunner:
             # Run tests
             test_output = self._run_tests(repo_path)
             
-            # Parse errors
-            errors = self.parser.parse_errors(test_output)
+            # Parse errors (pass repo_path to filter out system library errors)
+            errors = self.parser.parse_errors(test_output, repo_path=repo_path)
             
             if not errors:
                 print("No errors found! Tests passed.")
@@ -103,10 +113,18 @@ class DockerRunner:
                 self._emit_progress("error", "❌ No fixes could be applied. Stopping iterations.")
                 break
         
-        # Step 5: Push branch
-        self._emit_progress("pushing", "📤 Pushing changes to GitHub...")
-        self.git_handler.push_branch(branch_name)
-        self._emit_progress("success", f"✅ Branch pushed: {branch_name}")
+        # Step 5: Push branch (only if fixes were applied)
+        if len(self.fixes) > 0:
+            self._emit_progress("pushing", "📤 Pushing changes to GitHub...")
+            try:
+                self.git_handler.push_branch(branch_name)
+                self._emit_progress("success", f"✅ Branch pushed: {branch_name}")
+            except Exception as e:
+                self._emit_progress("error", f"❌ Failed to push branch: {str(e)}")
+                print(f"Error pushing branch: {e}")
+        else:
+            self._emit_progress("warning", "⚠️ No fixes were applied, skipping push")
+            print("No fixes applied, skipping push")
         
         # Step 6: Generate response
         self._emit_progress("completing", "📊 Generating final report...")
@@ -143,6 +161,32 @@ class DockerRunner:
             self.test_command = ['pytest', '--maxfail=10', '-v']
             print("⚠️  Could not detect project type, defaulting to Python/pytest")
     
+    def _create_venv(self, repo_path: str):
+        """Create a virtual environment for the Python project"""
+        self.venv_path = os.path.join(repo_path, '.venv')
+        
+        # Check if venv already exists
+        if os.path.exists(self.venv_path):
+            print(f"Virtual environment already exists at {self.venv_path}")
+        else:
+            print(f"Creating virtual environment at {self.venv_path}...")
+            try:
+                venv.create(self.venv_path, with_pip=True)
+                print("✅ Virtual environment created successfully")
+            except Exception as e:
+                print(f"⚠️  Error creating venv: {e}, will use system Python")
+                self.venv_path = None
+                self.venv_python = None
+                return
+        
+        # Set path to venv's python executable
+        if sys.platform == "win32":
+            self.venv_python = os.path.join(self.venv_path, 'Scripts', 'python.exe')
+        else:
+            self.venv_python = os.path.join(self.venv_path, 'bin', 'python')
+        
+        print(f"✅ Using Python: {self.venv_python}")
+    
     def _install_dependencies(self, repo_path: str):
         """Install dependencies based on project type"""
         if self.project_type == 'javascript':
@@ -170,16 +214,19 @@ class DockerRunner:
         elif self.project_type == 'python':
             requirements_file = os.path.join(repo_path, 'requirements.txt')
             if os.path.exists(requirements_file):
-                print("Installing pip dependencies from requirements.txt...")
+                print("Installing pip dependencies in virtual environment...")
                 try:
+                    # Use venv's pip if available, otherwise system pip
+                    pip_cmd = [self.venv_python, '-m', 'pip'] if self.venv_python else ['pip']
+                    
                     subprocess.run(
-                        ['pip', 'install', '-r', 'requirements.txt'],
+                        pip_cmd + ['install', '-r', 'requirements.txt'],
                         cwd=repo_path,
                         capture_output=True,
                         text=True,
                         timeout=300  # 5 minute timeout
                     )
-                    print("✅ Dependencies installed successfully")
+                    print("✅ Dependencies installed successfully in isolated environment")
                 except subprocess.TimeoutExpired:
                     print("❌ Dependency installation timed out")
                 except Exception as e:
@@ -192,38 +239,77 @@ class DockerRunner:
         test_cmd_str = ' '.join(self.test_command)
         print(f"Running tests with: {test_cmd_str}")
         
+        # Flag to track if process is still running
+        process_running = {'status': True}
+        
+        # Function to send periodic progress updates
+        def send_progress_updates():
+            elapsed = 0
+            while process_running['status'] and elapsed < 120:
+                time.sleep(10)  # Send update every 10 seconds
+                elapsed += 10
+                if process_running['status']:
+                    self._emit_progress("info", f"⏳ Tests still running... ({elapsed}s elapsed)")
+        
+        # Start progress update thread
+        progress_thread = threading.Thread(target=send_progress_updates, daemon=True)
+        progress_thread.start()
+        
         try:
-            # Convert command to string for shell execution on Windows
-            if self.project_type == 'javascript':
+            # For Python projects, use venv's python if available
+            if self.project_type == 'python':
+                # Use venv's python -m pytest to isolate from system packages
+                python_exe = self.venv_python if self.venv_python else 'python'
+                cmd = [python_exe, '-m', 'pytest', '--maxfail=10', '-v', '--tb=short']
+                print(f"Using Python: {python_exe}")
+            elif self.project_type == 'javascript':
                 cmd = ' '.join(self.test_command)
             else:
                 cmd = self.test_command
             
-            result = subprocess.run(
+            # Use Popen for better control and to avoid output buffering issues
+            process = subprocess.Popen(
                 cmd,
                 cwd=repo_path,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=120,  # 2 minute timeout
-                shell=(self.project_type == 'javascript')  # Use shell for npm on Windows
+                shell=(self.project_type == 'javascript'),  # Use shell for npm on Windows
+                bufsize=1  # Line buffered
             )
             
+            # Wait for process with timeout
+            try:
+                stdout, stderr = process.communicate(timeout=120)
+                returncode = process.returncode
+            except subprocess.TimeoutExpired:
+                print("⏱️  Test execution timed out (120s limit), terminating process...")
+                process.kill()
+                stdout, stderr = process.communicate()
+                self._emit_progress("warning", "⚠️ Test execution timed out")
+                return ""
+            finally:
+                process_running['status'] = False
+            
             # Combine stdout and stderr
-            output = result.stdout + "\n" + result.stderr
+            output = stdout + "\n" + stderr
             
             # Log test result
-            if result.returncode == 0:
+            if returncode == 0:
                 print("✅ Tests passed")
+                self._emit_progress("success", "✅ Tests completed successfully")
             else:
-                print(f"❌ Tests failed with exit code {result.returncode}")
+                print(f"❌ Tests failed with exit code {returncode}")
+                self._emit_progress("info", f"📋 Tests completed with {returncode} failures")
             
             return output
-        except subprocess.TimeoutExpired:
-            print("⏱️  Test execution timed out (120s limit)")
-            return ""
         except Exception as e:
+            process_running['status'] = False
             print(f"❌ Error running tests: {e}")
+            self._emit_progress("error", f"❌ Error running tests: {str(e)}")
             return ""
+        finally:
+            process_running['status'] = False
     
     def _apply_and_commit_fix(self, error: ErrorInfo) -> bool:
         """Apply fix and commit if successful"""

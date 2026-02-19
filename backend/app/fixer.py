@@ -220,6 +220,10 @@ class FixEngine:
         
         with open(file_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
+            content = ''.join(lines)
+        
+        # Extract the undefined name from error message
+        undefined_name = None
         
         # Check if error is about undefined name (like List, Dict, Optional, etc.)
         if 'is not defined' in error.message or 'not defined' in error.message:
@@ -227,49 +231,68 @@ class FixEngine:
             match = re.search(r"name '(\w+)' is not defined", error.message)
             if not match:
                 match = re.search(r"'(\w+)' is not defined", error.message)
-            if not match:
-                # Try to find it in the line itself
-                if error.line <= len(lines):
-                    line = lines[error.line - 1]
-                    # Look for type annotations
-                    type_match = re.search(r': (List|Dict|Optional|Set|Tuple|Union)\[', line)
-                    if type_match:
-                        match = type_match
             
             if match:
                 undefined_name = match.group(1)
-                print(f"Detected undefined type: {undefined_name}")
+        
+        # If we couldn't find it in the error message, scan the entire file for typing annotations
+        if not undefined_name:
+            # Look for type annotations using common typing names that aren't imported
+            typing_names = {'List', 'Dict', 'Optional', 'Set', 'Tuple', 'Union', 'Any', 'Callable'}
+            
+            # Check what's already imported
+            imported_types = set()
+            from_typing_pattern = r'from typing import (.+)'
+            for line in lines:
+                typing_match = re.match(from_typing_pattern, line)
+                if typing_match:
+                    imports = typing_match.group(1)
+                    imported_types.update(imp.strip() for imp in imports.split(','))
+            
+            # Find which typing names are used but not imported
+            for name in typing_names:
+                # Check if name is used in type annotations but not imported
+                if not re.search(rf'\bfrom typing import.*\b{name}\b', content):
+                    # Look for usage patterns
+                    if re.search(rf'\b{name}\[', content) or re.search(rf': {name}\b', content):
+                        undefined_name = name
+                        break
+        
+        if undefined_name:
+            print(f"Detected undefined type: {undefined_name}")
+            
+            # Common typing imports
+            typing_names = ['List', 'Dict', 'Optional', 'Set', 'Tuple', 'Union', 'Any', 'Callable']
+            
+            if undefined_name in typing_names:
+                # Find where to add the import
+                import_line = -1
+                last_import = -1
                 
-                # Common typing imports
-                typing_names = ['List', 'Dict', 'Optional', 'Set', 'Tuple', 'Union', 'Any', 'Callable']
+                for i, line in enumerate(lines):
+                    if line.startswith('from typing import'):
+                        # Check if already imported
+                        if re.search(rf'\b{undefined_name}\b', line):
+                            print(f"Type {undefined_name} already imported")
+                            return False  # Already imported
+                        import_line = i
+                        break
+                    elif line.startswith('import ') or line.startswith('from '):
+                        last_import = i
                 
-                if undefined_name in typing_names:
-                    # Find where to add the import
-                    import_line = -1
-                    last_import = -1
-                    
-                    for i, line in enumerate(lines):
-                        if line.startswith('from typing import'):
-                            # Check if already imported
-                            if undefined_name in line:
-                                return False  # Already imported
-                            import_line = i
-                            break
-                        elif line.startswith('import ') or line.startswith('from '):
-                            last_import = i
-                    
-                    if import_line >= 0:
-                        # Append to existing typing import
-                        lines[import_line] = lines[import_line].rstrip() + f', {undefined_name}\n'
-                    else:
-                        # Add new import after last import or at top
-                        insert_pos = last_import + 1 if last_import >= 0 else 0
-                        lines.insert(insert_pos, f'from typing import {undefined_name}\n')
-                    
-                    with open(file_path, 'w', encoding='utf-8') as f:
-                        f.writelines(lines)
-                    
-                    print(f"✓ Added import: from typing import {undefined_name}")
-                    return True
+                if import_line >= 0:
+                    # Append to existing typing import
+                    lines[import_line] = lines[import_line].rstrip().rstrip(',') + f', {undefined_name}\n'
+                    print(f"✓ Appended to existing typing import: {undefined_name}")
+                else:
+                    # Add new import after last import or at top
+                    insert_pos = last_import + 1 if last_import >= 0 else 0
+                    lines.insert(insert_pos, f'from typing import {undefined_name}\n')
+                    print(f"✓ Added new typing import: {undefined_name}")
+                
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.writelines(lines)
+                
+                return True
         
         return False
