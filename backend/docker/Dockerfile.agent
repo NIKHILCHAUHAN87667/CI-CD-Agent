@@ -7,16 +7,26 @@ WORKDIR /agent
 RUN apt-get update && apt-get install -y \
     git \
     build-essential \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
-# Install pytest and common testing tools
-RUN pip install --no-cache-dir pytest pytest-cov pytest-xdist
+# Install pytest and common testing tools + sandbox server deps
+RUN pip install --no-cache-dir \
+    fastapi \
+    uvicorn[standard] \
+    pytest \
+    pytest-cov \
+    pytest-xdist
 
 # This is the agent that will run inside a sandboxed environment
 # The actual repo code and its dependencies will be installed at runtime
 
-# Copy the entrypoint script
-COPY docker/agent_entrypoint.py .
+# Copy the server script
+COPY docker/agent_server.py .
 
-# Set entrypoint
-ENTRYPOINT ["python", "agent_entrypoint.py"]
+# Expose port
+EXPOSE 8080
+
+# Run sandbox server
+CMD ["uvicorn", "agent_server:app", "--host", "0.0.0.0", "--port", "8080"]

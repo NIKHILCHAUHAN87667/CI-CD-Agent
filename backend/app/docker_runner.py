@@ -5,6 +5,7 @@ import threading
 import time
 import sys
 import venv
+import httpx
 from typing import List, Dict
 from app.models import ErrorInfo, FixResult, AgentResponse, ErrorType
 from app.parser import ErrorParser
@@ -39,6 +40,9 @@ class DockerRunner:
         self.fixes: List[FixResult] = []
         self.total_failures = 0
         self.iterations = 0
+        self.branch_name = None
+        self.sandbox_url = os.getenv("SANDBOX_URL", "").strip()
+        self.sandbox_token = os.getenv("SANDBOX_TOKEN", "").strip()
     
     def _emit_progress(self, status: str, message: str, data: dict = None):
         """Emit progress update via WebSocket"""
@@ -61,26 +65,40 @@ class DockerRunner:
         self._emit_progress("analyzing", "🔍 Detecting project type...")
         self._detect_project_type(repo_path)
         self._emit_progress("info", f"📋 Detected {self.project_type} project")
-                # Step 2.5: Create virtual environment for Python projects
-        if self.project_type == 'python':
+        # Step 2.5: Create virtual environment for Python projects (local mode only)
+        if not self.sandbox_url and self.project_type == 'python':
             self._emit_progress("venv", "🔧 Creating isolated Python environment...")
             self._create_venv(repo_path)
             self._emit_progress("success", "✅ Virtual environment created")
-                # Step 2: Install dependencies
-        self._emit_progress("installing", "📦 Installing dependencies...")
-        self._install_dependencies(repo_path)
-        self._emit_progress("success", "✅ Dependencies installed")
+        # Step 2: Install dependencies (local mode only)
+        if not self.sandbox_url:
+            self._emit_progress("installing", "📦 Installing dependencies...")
+            self._install_dependencies(repo_path)
+            self._emit_progress("success", "✅ Dependencies installed")
         
         # Step 3: Create new branch
         self._emit_progress("info", "🌿 Creating feature branch...")
         branch_name = self.git_handler.create_branch(self.team, self.leader)
+        self.branch_name = branch_name
         self._emit_progress("success", f"✅ Branch created: {branch_name}")
+        
+        # If sandbox is enabled, push branch so the sandbox can clone it
+        if self.sandbox_url:
+            self._emit_progress("info", "📤 Pushing branch for sandbox access...")
+            if not self.git_handler.push_branch(branch_name):
+                raise Exception("Failed to push branch for sandbox access")
         
         # Step 4: Iterative fix loop
         for iteration in range(self.max_retries):
             self.iterations = iteration + 1
             print(f"\n=== Iteration {self.iterations} ===")
             self._emit_progress("testing", f"🧪 Running tests (Iteration {self.iterations}/{self.max_retries})...")
+            
+            # If sandbox is enabled, ensure latest commits are pushed before testing
+            if self.sandbox_url:
+                if not self.git_handler.push_branch(branch_name):
+                    self._emit_progress("error", "❌ Failed to push branch updates for sandbox")
+                    raise Exception("Failed to push branch updates for sandbox")
             
             # Run tests
             test_output = self._run_tests(repo_path)
@@ -238,6 +256,28 @@ class DockerRunner:
         """Run tests based on project type and return output"""
         test_cmd_str = ' '.join(self.test_command)
         print(f"Running tests with: {test_cmd_str}")
+        
+        # If sandbox is configured, run tests remotely
+        if self.sandbox_url:
+            try:
+                url = self.sandbox_url.rstrip("/") + "/run-tests"
+                headers = {"X-Sandbox-Token": self.sandbox_token} if self.sandbox_token else {}
+                payload = {
+                    "repo_url": self.repo_url,
+                    "branch": self.branch_name,
+                    "timeout_sec": 120,
+                }
+                resp = httpx.post(url, json=payload, headers=headers, timeout=150)
+                resp.raise_for_status()
+                data = resp.json()
+                stdout = data.get("stdout", "")
+                stderr = data.get("stderr", "")
+                if data.get("timed_out"):
+                    self._emit_progress("warning", "⚠️ Sandbox tests timed out")
+                return stdout + "\n" + stderr
+            except Exception as e:
+                self._emit_progress("error", f"❌ Sandbox test execution failed: {str(e)}")
+                return ""
         
         # Flag to track if process is still running
         process_running = {'status': True}
