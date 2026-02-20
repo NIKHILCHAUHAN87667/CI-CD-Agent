@@ -499,7 +499,11 @@ async def get_run(
 def debug_ws_manager():
     """Debug endpoint to check WebSocket manager state"""
     return {
+<<<<<<< HEAD
         "has_loop": ws_manager.main_loop is not None,
+=======
+        "has_loop": ws_manager.main_loop isit  not None,
+>>>>>>> 71bc95136831942783928367fc93cbbbc49b1ca8
         "loop_running": ws_manager.main_loop.is_running() if ws_manager.main_loop else False,
         "active_connections": {run_id: len(conns) for run_id, conns in ws_manager.active_connections.items()},
         "queued_messages": {run_id: len(msgs) for run_id, msgs in ws_manager.progress_queue.items()}
