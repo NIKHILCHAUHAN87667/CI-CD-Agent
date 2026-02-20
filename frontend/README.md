@@ -26,7 +26,7 @@ Modern React frontend for the AI DevOps Agent with TailwindCSS and GitHub OAuth 
 
 ### Prerequisites
 - Node.js 18+ and npm
-- Backend API running on http://localhost:8000
+- Backend API running on https://cicdagentapi.onrender.com
 
 ### Install Dependencies
 ```bash
@@ -36,7 +36,7 @@ npm install
 ### Configure Environment
 Create `.env` file:
 ```env
-VITE_API_URL=http://localhost:8000
+VITE_API_URL=https://cicdagentapi.onrender.com
 VITE_GITHUB_CLIENT_ID=your_github_client_id
 VITE_GITHUB_REDIRECT_URI=http://localhost:3000/auth/callback
 ```

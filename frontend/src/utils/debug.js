@@ -4,6 +4,8 @@
  */
 
 export const debugAuth = {
+  apiBase: import.meta.env.VITE_API_URL || 'https://cicdagentapi.onrender.com',
+
   // Check what's in localStorage
   checkStorage: () => {
     const authStorage = localStorage.getItem('auth-storage');
@@ -38,7 +40,7 @@ export const debugAuth = {
       
       console.log('Testing token:', token?.substring(0, 20) + '...');
       
-      const response = await fetch('http://localhost:8000/auth/me', {
+      const response = await fetch(`${debugAuth.apiBase}/auth/me`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
@@ -74,7 +76,7 @@ export const debugAuth = {
       
       console.log('Fetching repos with token:', token?.substring(0, 20) + '...');
       
-      const response = await fetch('http://localhost:8000/repos', {
+      const response = await fetch(`${debugAuth.apiBase}/repos`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
@@ -98,7 +100,7 @@ export const debugAuth = {
     console.log('Testing debug endpoint with token:', token?.substring(0, 20) + '...');
     
     try {
-      const response = await fetch('http://localhost:8000/debug/token', {
+      const response = await fetch(`${debugAuth.apiBase}/debug/token`, {
         headers: {
           'Authorization': token ? `Bearer ${token}` : 'None',
           'Content-Type': 'application/json'

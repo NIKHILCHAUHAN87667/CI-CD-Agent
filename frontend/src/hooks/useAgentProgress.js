@@ -10,8 +10,9 @@ export const useAgentProgress = (runId) => {
     if (!runId) return;
 
     // Connect to WebSocket
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//localhost:8000/ws/runs/${runId}`;
+    const apiBase = import.meta.env.VITE_API_URL || 'https://cicdagentapi.onrender.com';
+    const wsBase = apiBase.replace(/^http/, 'ws');
+    const wsUrl = `${wsBase}/ws/runs/${runId}`;
     
     console.log(`🔌 Connecting to WebSocket: ${wsUrl}`);
     
